@@ -102,11 +102,8 @@ jobs:
           cd openwrt
           # Derive .config from the upstream profile plus the release extras.
           ./scripts/kconfig.pl + configs/an7581.config configs/release.config > .config
-          # Optional overlay (rootfs files) supplied by this repository.
-          if [ -d "$GITHUB_WORKSPACE/files" ]; then
-            cp -a "$GITHUB_WORKSPACE/files" openwrt/files
-          fi
-          # Patches the PON feed and pins the device profile.
+          # Patches the PON feed and pins the device profile. The script exits
+          # non-zero if the fix does not land, so a broken build cannot pass.
           chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
           "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
