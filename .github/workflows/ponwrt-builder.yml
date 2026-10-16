@@ -121,6 +121,15 @@ jobs:
           grep -q '^CONFIG_TARGET_airoha_an7581_DEVICE_fiberhome_hg5382a=y' .config
           grep -q '^CONFIG_PACKAGE_airoha-ponctl=y' .config
           echo "target and PON packages confirmed"
+          # miniupnpd cannot build at the moment, and a failure there only shows
+          # up after an hour of compiling. Catch it here instead. Written as an
+          # if, not "grep -q ... && exit", because under set -e a legitimate miss
+          # (grep returning 1) would abort the step.
+          if grep -qE '^CONFIG_PACKAGE_miniupnpd(-nftables|-iptables)?=y' .config; then
+            echo "ERROR: miniupnpd is still enabled; the build would fail on it"
+            exit 1
+          fi
+          echo "miniupnpd is off"
 
       - name: Download sources
         run: |
