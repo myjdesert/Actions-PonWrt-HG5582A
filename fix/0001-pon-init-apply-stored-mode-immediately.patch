@@ -1,0 +1,84 @@
+--- a/airoha-ponctl/files/pon.init
++++ b/airoha-ponctl/files/pon.init
+@@ -1,9 +1,65 @@
+ #!/bin/sh /etc/rc.common
+ # SPDX-License-Identifier: GPL-2.0-only
++#
++# Fixed /etc/init.d/pon -- applies a stored line mode immediately.
++#
++# The airoha-xpon driver treats a mode change as a request for the *next*
++# activation. airoha_xpon_set_mode_locked() stores the new value in
++# configured_mode and, whenever the line is already running, only logs
++#
++#     "PON line mode %s will take effect on the next interface activation"
++#
++# while still returning success. The registration identity is parked the same
++# way: sysfs keeps it in pending_identity until the following ndo_open.
++#
++# Because netifd brings pon0 up before this init script runs, that "next
++# activation" never arrives and a plain 'ponctl mode set' silently has no
++# effect -- neither at boot nor from LuCI, even though the LuCI page warns
++# that the settings apply "after the PON interface restarts" without anything
++# ever restarting it.
++#
++# Detect the lag and bounce the netdev once so the stored configuration is
++# latched right away.
+ 
+ START=18
+ USE_PROCD=1
+ 
++# Prints the mode the driver has actually latched onto the running line.
++# Empty or "none" means the line has not been activated yet.
++running_mode() {
++	/usr/sbin/ponctl --device "$1" mode 2>/dev/null |
++		sed -n 's/^active=//p'
++}
++
++# Returns 0 when the running line has not picked the stored configuration up
++# yet, meaning the caller has to re-activate it.
++needs_reactivation() {
++	local device="$1" mode="$2" running pending latched
++
++	running=$(running_mode "$device")
++	if [ -z "$running" ] || [ "$running" = none ]; then
++		# The line is down. The driver reads configured_mode and the
++		# pending identity during the ndo_open netifd is about to
++		# issue, so the new settings need no help from us.
++		return 1
++	fi
++
++	if [ -n "$mode" ] && [ "$running" != "$mode" ]; then
++		return 0
++	fi
++
++	# sysfs parks an updated serial number in pending_identity until the
++	# next ndo_open; a mismatch means an identity change is still waiting.
++	pending=$(cat "/sys/class/net/$device/xpon/serial_number" 2>/dev/null)
++	latched=$(cat "/sys/class/net/$device/xpon/active_serial_number" 2>/dev/null)
++	if [ -n "$pending" ] && [ "$pending" != none ] &&
++		[ "$pending" != "$latched" ]; then
++		return 0
++	fi
++
++	return 1
++}
++
+ apply_line() {
+ 	local section="$1"
+ 	local device mode serial registration
+@@ -25,7 +81,14 @@
+ 	fi
+ 	/usr/sbin/ponctl --device "$device" identity set \
+ 		--serial "$serial" \
+-		--registration-id "$registration"
++		--registration-id "$registration" || return 1
++
++	if needs_reactivation "$device" "$mode"; then
++		logger -t pon "re-activating $device to latch mode '$mode'" \
++			2>/dev/null || true
++		ip link set "$device" down
++		ip link set "$device" up
++	fi
+ }
+ 
+ apply_all_lines() {

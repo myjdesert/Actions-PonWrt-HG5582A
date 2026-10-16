@@ -1,0 +1,169 @@
+#
+# Builds a PonWrt image for the FiberHome HG5382A / HG5582A (Airoha AN7581DT)
+# with the PON line-mode fix applied.
+#
+# Layout follows the P3TERX/Actions-OpenWrt template:
+#   feeds.conf.default  feed list, installed before `feeds update`
+#   diy-part1.sh        runs before `feeds update -a`
+#   diy-part2.sh        runs after `feeds install -a`; patches the PON feed
+#   configs/*.config    Kconfig fragments merged on top of the upstream config
+#   fix/                the patched pon.init and its unified diff
+#
+# Trigger from the Actions tab. The `ssh` input opens an upterm session so a
+# failed run can be inspected in place.
+
+name: PonWrt Builder (HG5582A)
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'Enable SSH debugging (upterm)'
+        type: boolean
+        required: false
+        default: false
+
+env:
+  REPO_URL: https://github.com/pbs05/ponwrt
+  REPO_BRANCH: master
+  FEEDS_CONF: feeds.conf.default
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  TZ: Asia/Shanghai
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet \
+                      /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            build-essential bzip2 ccache clang cmake cpio curl \
+            device-tree-compiler flex gawk gettext g++-multilib gcc-multilib \
+            gperf help2man intltool libelf-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev lld llvm \
+            ninja-build p7zip-full patch pkgconf python3 python3-docutils \
+            python3-pip python3-ply python3-pyelftools qemu-utils re2c rsync \
+            scons squashfs-tools subversion swig texinfo uglifyjs unzip wget \
+            xmlto xxd zlib1g-dev zstd
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          sudo timedatectl set-timezone "$TZ"
+          sudo mkdir -p /workdir
+          sudo chown "$USER:$GROUPS" /workdir
+
+      - name: Clone source code
+        working-directory: /workdir
+        run: |
+          df -hT "$PWD"
+          git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
+          ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
+
+      - name: Cache downloaded sources
+        uses: actions/cache@v4
+        with:
+          path: /workdir/openwrt/dl
+          key: ponwrt-dl-an7581-${{ hashFiles('configs/*.config', 'feeds.conf.default') }}
+          restore-keys: |
+            ponwrt-dl-an7581-
+
+      - name: Load custom feeds
+        run: |
+          [ -e "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default
+          chmod +x "$DIY_P1_SH"
+          cd openwrt
+          "$GITHUB_WORKSPACE/$DIY_P1_SH"
+
+      - name: Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
+
+      - name: Install feeds
+        run: cd openwrt && ./scripts/feeds install -a
+
+      - name: Load custom configuration
+        run: |
+          set -e
+          cd openwrt
+          # Derive .config from the upstream profile plus the release extras.
+          ./scripts/kconfig.pl + configs/an7581.config configs/release.config > .config
+          # Optional overlay (rootfs files) supplied by this repository.
+          if [ -d "$GITHUB_WORKSPACE/files" ]; then
+            cp -a "$GITHUB_WORKSPACE/files" openwrt/files
+          fi
+          # Patches the PON feed and pins the device profile.
+          chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
+          "$GITHUB_WORKSPACE/$DIY_P2_SH"
+
+      - name: Resolve configuration
+        run: |
+          set -e
+          cd openwrt
+          make defconfig
+          grep -q '^CONFIG_TARGET_airoha_an7581_DEVICE_fiberhome_hg5382a=y' .config
+          grep -q '^CONFIG_PACKAGE_airoha-ponctl=y' .config
+          echo "target and PON packages confirmed"
+
+      - name: Download sources
+        run: |
+          cd openwrt
+          make download -j"$(nproc)"
+          find dl -size -1024c -exec ls -l {} \; || true
+          find dl -size -1024c -exec rm -f {} \; || true
+
+      - name: Setup SSH debugging
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh }}
+        uses: owenthereal/action-upterm@v2
+        with:
+          limit-access-to-actor: true
+
+      - name: Compile the firmware
+        id: compile
+        run: |
+          cd openwrt
+          echo "$(nproc) threads"
+          make -j"$(nproc)" || make -j1 || make -j1 V=s
+          echo "status=success" >> "$GITHUB_OUTPUT"
+
+      - name: Check space usage
+        if: (!cancelled())
+        run: df -hT
+
+      - name: Collect firmware
+        if: steps.compile.outputs.status == 'success' && !cancelled()
+        run: |
+          set -e
+          mkdir -p out
+          find openwrt/bin/targets/airoha -type f -name '*hg5382a*' \
+               \( -name '*.itb' -o -name '*.bin' -o -name '*.manifest' -o -name '*.sha256' \) \
+               -exec cp -v {} out/ \;
+          # Rebuilt PON control package, for a package-level update instead of
+          # a full reflash.
+          find openwrt/bin/packages -type f -name 'airoha-ponctl*' \
+               -exec cp -v {} out/ \; 2>/dev/null || true
+          ls -l out
+          test -n "$(find out -name '*.itb' -print -quit)"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        if: steps.compile.outputs.status == 'success' && !cancelled()
+        with:
+          name: ponwrt-hg5582a-${{ github.run_number }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 30

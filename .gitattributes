@@ -1,0 +1,20 @@
+# 强制 LF。Windows 上若 core.autocrlf=true，shell / patch 文件会被转成 CRLF，
+# 导致 GitHub Actions 的 ubuntu runner 报 "bad interpreter" 或补丁拒绝应用。
+* text=auto eol=lf
+
+*.sh      text eol=lf
+*.patch   text eol=lf
+*.diff    text eol=lf
+*.init    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.config  text eol=lf
+*.conf    text eol=lf
+*.md      text eol=lf
+
+# 二进制文件不做转换
+*.ko      binary
+*.bin     binary
+*.itb     binary
+*.png     binary
+*.jpg     binary
