@@ -3,14 +3,15 @@
 #
 # Why this exists: ponwrt-builder.yml only does `actions/upload-artifact`, so a
 # finished build leaves its images inside the run's Artifacts area and nothing
-# shows up on the Releases page. Downloading them from a browser (or over a slow
-# link) is the only option otherwise.
+# shows up on the Releases page. Fetching them from a browser over a slow link
+# is the only other option.
 #
 # This workflow pulls an artifact straight from the Actions API on a runner and
 # publishes it as a release with checksums. No rebuild, runs in about a minute.
 #
 # Usage: Actions -> this workflow -> Run workflow
-#   artifact_id : the numeric id, visible in the run page URL or via the API
+#   artifact_id : numeric id of the artifact
+#   run_id      : the run that produced it (must match, or the API returns 0)
 #   tag         : release tag to create (or update)
 #
 name: Publish firmware from artifact
@@ -48,22 +49,25 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           artifact-id: ${{ inputs.artifact_id }}
-          path: rel
+          path: dl
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ inputs.run_id }}
 
-      - name: Inspect and checksum
+      - name: Collect, inspect and checksum
         run: |
           set -e
-          echo "=== downloaded files ==="
-          find rel -type f -printf '%12s  %p\n' | sort -k2
-          cd rel
-          # Flatten one directory level if the artifact had a nested layout.
-          if [ -z "$(find . -maxdepth 1 -type f)" ]; then
-            find . -mindepth 2 -type f -exec mv -n {} . \; 2>/dev/null || true
-          fi
-          sha256sum * > sha256sums
+          echo "=== downloaded tree ==="
+          find dl -type f -printf '%12s  %p\n' | sort -k2
+
+          # The artifact keeps its own top-level directory, so flatten into a
+          # clean out/ instead of leaving a nested dir that trips up globs.
+          mkdir -p out
+          find dl -mindepth 1 -type f -exec cp -n {} out/ \;
+          cd out
+          echo "=== publishing these files ==="
+          ls -l
+          find . -maxdepth 1 -type f ! -name sha256sums -exec sha256sum {} \; | sed 's|\./||' > sha256sums
           cat sha256sums
           test -n "$(find . -maxdepth 1 -name '*.itb' -print -quit)" \
             || { echo "::error::no .itb image in the artifact"; exit 1; }
@@ -73,7 +77,7 @@ jobs:
         with:
           tag_name: ${{ inputs.tag }}
           name: ${{ inputs.title != '' && inputs.title || inputs.tag }}
-          files: rel/*
+          files: out/*
           prerelease: true
           generate_release_notes: true
           fail_on_unmatched_files: true
