@@ -1,0 +1,315 @@
+#
+# PonWrt for the Nokia XG-040G-MF (Airoha AN7583DT), UBI layout.
+#
+# Composition of this image:
+#   * PON          - an7583 airoha-xpon + kmod-airoha-en7572 + airoha-ponctl
+#   * USB          - xhci-mtk host, usb-storage/uas, ext4/exfat/vfat/ntfs3,
+#                    block-mount, usb-net incl. rtl8152 (RTL8156 2.5G dongles)
+#   * EasyTier     - easytier + luci-app-easytier (prebuilt aarch64 binary)
+#   * OpenClash    - luci-app-openclash, meta core bundled into the image
+#
+# Why a separate workflow: ponwrt-builder.yml is hard-wired to an7581 /
+# fiberhome_hg5382a. Rewriting it in place would break the HG5582A build.
+#
+# Device facts that must not be violated:
+#   * xg-040g-mf is AN7583DT, NOT AN7581. An an7581 bootloader or image must
+#     never be used here; memory controller and NAND controller differ.
+#   * This build emits its own matching preloader.bin + bl31-uboot.fip. Use
+#     that pair; do not mix in a bootloader from another source.
+#   * The UBI variant stores MAC in the `ri` volume and BOSA calibration in
+#     `bosa`. Both must exist before the first boot or airoha_eth will never
+#     probe.
+
+name: PonWrt MF (an7583)
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag'
+        required: true
+        default: 'ponwrt-mf-20261018'
+        type: string
+      ssh:
+        description: 'Enable SSH debugging (upterm)'
+        type: boolean
+        required: false
+        default: false
+
+env:
+  REPO_URL: https://github.com/pbs05/ponwrt
+  REPO_BRANCH: master
+  FEEDS_CONF: feeds.conf.default
+  DIY_P1_SH: diy-part1.sh
+  TZ: Asia/Shanghai
+  DEVICE_UBI: nokia_xg-040g-mf-ubi
+  DEVICE: nokia_xg-040g-mf
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ponwrt-mf
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build an7583 (nokia_xg-040g-mf-ubi)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL
+          sudo -E apt-get clean
+          sudo -E apt-get update
+          sudo -E apt-get install -y --no-install-recommends \
+            asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk \
+            gettext git g++-multilib gcc-multilib gperf help2man intltool \
+            libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev \
+            libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool libyaml-dev lld llvm ninja-build p7zip-full patch pkgconf \
+            python3 python3-docutils python3-pip python3-ply python3-pyelftools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            uglifyjs unzip wget xmlto xxd zlib1g-dev zstd
+          sudo -E apt-get clean
+          sudo timedatectl set-timezone "$TZ"
+          sudo mkdir -p /workdir
+          sudo chown "$USER:$GROUPS" /workdir
+          which gcc g++ make python3 patch zstd
+
+      - name: Clone source code
+        working-directory: /workdir
+        run: |
+          df -hT "$PWD"
+          git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
+          cd openwrt && git log -1 --format='%H %ci %s'
+          ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
+
+      - name: Cache downloaded sources
+        uses: actions/cache@v4
+        with:
+          path: /workdir/openwrt/dl
+          key: ponwrt-dl-an7583-mf1-${{ hashFiles('configs/*.config', 'feeds.conf.default') }}
+          restore-keys: |
+            ponwrt-dl-an7583-mf1-
+            ponwrt-dl-an7583-
+
+      - name: Load custom feeds
+        run: |
+          set -e
+          [ -e "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default
+          # Third-party feeds for the extras. The upstream PonWrt feed list has
+          # neither of these, so without these two lines every luci-app-openclash
+          # and easytier symbol below would be dropped by defconfig.
+          cat >> openwrt/feeds.conf.default <<'EOF'
+          src-git openclash https://github.com/vernesong/OpenClash.git
+          src-git easytier https://github.com/EasyTier/luci-app-easytier.git
+          EOF
+          cat openwrt/feeds.conf.default
+          chmod +x "$DIY_P1_SH"
+          cd openwrt
+          "$GITHUB_WORKSPACE/$DIY_P1_SH"
+
+      - name: Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
+
+      - name: Install feeds
+        run: cd openwrt && ./scripts/feeds install -a
+
+      - name: Load custom configuration
+        run: |
+          set -e
+          cd openwrt
+          ./scripts/kconfig.pl + configs/an7583.config configs/release.config > .config
+          # Extras are appended, not merged: kconfig keeps the last value, so
+          # this overrides any "is not set" line from the upstream profile.
+          cat "$GITHUB_WORKSPACE/configs/mf-extra.config" >>.config
+          wc -l .config
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET)=' .config
+
+      - name: Bundle OpenClash meta core
+        run: |
+          set +e
+          mkdir -p openwrt/files/etc/openclash/core
+          curl -fL --retry 3 --max-time 180 -o /tmp/cc.tar.gz \
+            https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz
+          if [ $? -ne 0 ]; then
+            echo "::warning::meta core download failed; the image ships without a core"
+            exit 0
+          fi
+          tar -xzf /tmp/cc.tar.gz -C openwrt/files/etc/openclash/core
+          BIN=$(find openwrt/files/etc/openclash/core -maxdepth 1 -type f -name 'clash*' | head -1)
+          if [ -n "$BIN" ] && [ "$BIN" != "openwrt/files/etc/openclash/core/clash_meta" ]; then
+            mv "$BIN" openwrt/files/etc/openclash/core/clash_meta
+          fi
+          chmod 0755 openwrt/files/etc/openclash/core/clash_meta
+          file openwrt/files/etc/openclash/core/clash_meta
+          ls -l openwrt/files/etc/openclash/core/
+
+      - name: Resolve configuration
+        run: |
+          set -e
+          cd openwrt
+          make defconfig
+          echo '--- selected an7583 devices ---'
+          grep -E '^CONFIG_TARGET_(DEVICE_)?airoha_an7583_DEVICE_.*=y$' .config || true
+          echo '--- bootloader / PON ---'
+          grep -E '^CONFIG_PACKAGE_(u-boot-an7583_|kmod-airoha-en7572|airoha-ponctl)' .config || true
+          echo '--- USB / EasyTier / OpenClash ---'
+          grep -E '^CONFIG_PACKAGE_(kmod-usb-storage|usbutils|kmod-fs-|luci-app-openclash|easytier|luci-app-easytier|luci-compat)' .config || true
+
+          fail=0
+          need=(
+            '^CONFIG_TARGET_(DEVICE_)?airoha_an7583_DEVICE_nokia_xg-040g-mf-ubi=y$|MF ubi profile'
+            '^CONFIG_PACKAGE_u-boot-an7583_nokia_xg-040g-mf=y$|MF U-Boot package'
+            '^CONFIG_PACKAGE_kmod-airoha-en7572=[my]$|EN7572 PON driver'
+            '^CONFIG_PACKAGE_airoha-ponctl=y$|airoha-ponctl'
+            '^CONFIG_PACKAGE_kmod-usb-storage=y$|USB mass storage'
+            '^CONFIG_PACKAGE_usbutils=y$|usbutils'
+            '^CONFIG_PACKAGE_easytier=y$|easytier core'
+            '^CONFIG_PACKAGE_luci-app-easytier=y$|easytier LuCI app'
+            '^CONFIG_PACKAGE_luci-app-openclash=y$|OpenClash'
+          )
+          for entry in "${need[@]}"; do
+            pat="${entry%%|*}"; label="${entry##*|}"
+            if grep -qE "$pat" .config; then
+              echo "OK       $label"
+            else
+              echo "::error::missing: $label  (pattern $pat)"
+              fail=1
+            fi
+          done
+          if grep -qE '^CONFIG_PACKAGE_miniupnpd(-nftables|-iptables)?=y' .config; then
+            echo "::error::miniupnpd is enabled and known to fail the build"
+            fail=1
+          fi
+          [ $fail -eq 0 ] || exit 1
+          echo "all requested features are selected"
+
+      - name: Download sources
+        run: |
+          cd openwrt
+          make download -j"$(nproc)"
+          find dl -size -1024c -exec ls -l {} \; || true
+          find dl -size -1024c -exec rm -f {} \; || true
+
+      - name: Setup SSH debugging
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh }}
+        uses: owenthereal/action-upterm@v2
+        with:
+          limit-access-to-actor: true
+
+      - name: Compile the firmware
+        id: compile
+        run: |
+          cd openwrt
+          echo "$(nproc) threads"
+          set +e
+          make -j"$(nproc)"
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "::warning::parallel build returned $rc, retrying with -k to salvage the rest"
+            make -k -j1
+          fi
+          if ls bin/targets/airoha/an7583/*mf-ubi*sysupgrade*.itb >/dev/null 2>&1; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::no MF sysupgrade image was produced"
+            exit 1
+          fi
+
+      - name: Verify requested features in the image manifest
+        if: steps.compile.outputs.status == 'success' && !cancelled()
+        run: |
+          set +e
+          MAN=$(ls openwrt/bin/targets/airoha/an7583/*.manifest 2>/dev/null | head -1)
+          echo "manifest: $MAN"
+          if [ -z "$MAN" ]; then
+            echo "::warning::no manifest found"
+            exit 0
+          fi
+          for p in luci-app-openclash luci-app-easytier easytier usbutils \
+                   kmod-usb-storage kmod-usb-xhci-mtk kmod-fs-exfat block-mount \
+                   kmod-usb-net-rtl8152 airoha-ponctl kmod-airoha-en7572; do
+            if grep -qE "^${p}[ -]" "$MAN"; then
+              echo "OK       $p"
+            else
+              echo "::warning::MISSING $p"
+            fi
+          done
+
+      - name: Check space usage
+        if: (!cancelled())
+        run: df -hT
+
+      - name: Collect MF firmware
+        if: steps.compile.outputs.status == 'success' && !cancelled()
+        run: |
+          set -e
+          mkdir -p out
+          SRC=openwrt/bin/targets/airoha/an7583
+          ls -l "$SRC"
+          find "$SRC" -maxdepth 1 -type f -name "*${DEVICE}*" \
+               \( -name '*.itb' -o -name '*.bin' -o -name '*.fip' -o -name '*.manifest' \) \
+               -exec cp -v {} out/ \;
+          cp -v "$SRC"/version.buildinfo out/ 2>/dev/null || true
+          cp -v openwrt/files/etc/openclash/core/clash_meta out/openclash-core-clash_meta 2>/dev/null || true
+          ls -l out
+          ( cd out && sha256sum * > sha256sums )
+          cat out/sha256sums
+          test -n "$(find out -name "*${DEVICE_UBI}*sysupgrade*.itb" -print -quit)"
+
+      - name: Pack UBI four-piece set
+        if: steps.compile.outputs.status == 'success' && !cancelled()
+        run: |
+          set -e
+          cd out
+          ls | grep -E "^ponwrt-airoha-an7583-${DEVICE_UBI}-(preloader\.bin|bl31-uboot\.fip|initramfs-recovery\.itb|squashfs-sysupgrade\.itb)$" > /tmp/list || true
+          if [ -s /tmp/list ]; then
+            tar -czf "${DEVICE_UBI}-4pcs.tar.gz" $(cat /tmp/list)
+            ls -l "${DEVICE_UBI}-4pcs.tar.gz"
+          else
+            echo "::warning::four-piece set incomplete; only individual files will be uploaded"
+          fi
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        if: steps.compile.outputs.status == 'success' && !cancelled()
+        with:
+          name: ponwrt-an7583-mf-${{ github.run_number }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: rel
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || 'ponwrt-mf-manual' }}
+        run: |
+          set -e
+          find rel -maxdepth 2 -type f | sort
+          ( cd rel && tar -czf ../ponwrt-an7583-mf.tar.gz . )
+          ls -l ponwrt-an7583-mf.tar.gz
+          gh release create "$RELEASE_TAG" ponwrt-an7583-mf.tar.gz \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "PonWrt an7583 MF $RELEASE_TAG" --generate-notes --prerelease
