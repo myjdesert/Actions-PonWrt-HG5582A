@@ -1,0 +1,75 @@
+#
+# Publish existing build artifacts as a GitHub Release.
+#
+# Why this exists: ponwrt-builder.yml only does `actions/upload-artifact`, so a
+# finished build leaves its images inside the run's Artifacts area and nothing
+# shows up on the Releases page. Downloading them from a browser (or over a slow
+# link) is the only option otherwise.
+#
+# This workflow pulls an artifact straight from the Actions API on a runner and
+# publishes it as a release with checksums. No rebuild, runs in about a minute.
+#
+# Usage: Actions -> this workflow -> Run workflow
+#   artifact_id : the numeric id, visible in the run page URL or via the API
+#   tag         : release tag to create (or update)
+#
+name: Publish firmware from artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: 'Artifact ID to publish'
+        required: true
+        type: string
+      tag:
+        description: 'Release tag'
+        required: true
+        type: string
+      title:
+        description: 'Release title (optional)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download the artifact from the Actions API
+        uses: actions/download-artifact@v4
+        with:
+          artifact-id: ${{ inputs.artifact_id }}
+          path: rel
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+
+      - name: Inspect and checksum
+        run: |
+          set -e
+          echo "=== downloaded files ==="
+          find rel -type f -printf '%12s  %p\n' | sort -k2
+          cd rel
+          # Flatten one directory level if the artifact had a nested layout.
+          if [ -z "$(find . -maxdepth 1 -type f)" ]; then
+            find . -mindepth 2 -type f -exec mv -n {} . \; 2>/dev/null || true
+          fi
+          sha256sum * > sha256sums
+          cat sha256sums
+          test -n "$(find . -maxdepth 1 -name '*.itb' -print -quit)" \
+            || { echo "::error::no .itb image in the artifact"; exit 1; }
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.title != '' && inputs.title || inputs.tag }}
+          files: rel/*
+          prerelease: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
