@@ -22,6 +22,10 @@ on:
         description: 'Artifact ID to publish'
         required: true
         type: string
+      run_id:
+        description: 'Workflow run ID that produced the artifact'
+        required: true
+        type: string
       tag:
         description: 'Release tag'
         required: true
@@ -47,7 +51,7 @@ jobs:
           path: rel
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.run_id }}
+          run-id: ${{ inputs.run_id }}
 
       - name: Inspect and checksum
         run: |
