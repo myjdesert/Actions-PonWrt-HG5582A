@@ -1,0 +1,31 @@
+#!/bin/sh /etc/rc.common
+# Licensed to the public under the Apache License 2.0.
+#
+# Runs before pon.init (S18). See the package Makefile for the full story.
+
+START=17
+
+boot() {
+	guard
+}
+
+start() {
+	guard
+}
+
+guard() {
+	local mode
+	mode="$(uci -q get pon.line0.mode)"
+
+	case "$mode" in
+		epon-1g|epon1g|epon_1g)
+			logger -t pon-guard \
+				"stored mode '$mode' blocks PON probe on AN758x; forcing epon-10g-1g"
+			uci set pon.line0.mode='epon-10g-1g'
+			uci commit pon
+			;;
+		'')
+			# No mode stored at all: leave it to pon.init's default.
+			;;
+	esac
+}

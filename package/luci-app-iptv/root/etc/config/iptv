@@ -1,0 +1,7 @@
+
+config iptv 'config'
+	option enabled '1'
+	option uplink 'pon0'
+	option lan_port 'lan2'
+	option service_vlan '45'
+	option multicast_vlan '50'

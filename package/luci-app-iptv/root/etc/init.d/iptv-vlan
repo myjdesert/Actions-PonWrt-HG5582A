@@ -1,0 +1,15 @@
+#!/bin/sh /etc/rc.common
+# Licensed to the public under the Apache License 2.0.
+#
+# Applies the br-iptv VLAN table after netifd has created the bridge.
+# Runs late (START=95) so br-iptv, ct-iptv-svc and ct-iptv-mc all exist.
+
+START=95
+
+start() {
+	/usr/libexec/iptv-vlan
+}
+
+reload() {
+	/usr/libexec/iptv-vlan
+}

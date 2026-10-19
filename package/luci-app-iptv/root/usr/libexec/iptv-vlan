@@ -1,0 +1,65 @@
+#!/bin/sh
+# Licensed to the public under the Apache License 2.0.
+#
+# Finish the IPTV bridge VLAN setup.
+#
+# luci-app-iptv builds br-iptv with three members, but netifd creates it as a
+# transparent bridge (vlan_filtering=0). In that mode both 8021q subinterfaces
+# strip their tag on ingress, so PPPoE and multicast reach the LAN port as two
+# untagged streams in one broadcast domain -- the upstream router then has no
+# way to tell them apart, and multicast floods into the PPPoE session.
+#
+# With vlan_filtering=1 and an explicit table:
+#
+#   <lan_port>    service_vlan   PVID, egress untagged   -> PPPoE
+#   <lan_port>    multicast_vlan                         -> tagged multicast
+#   ct-iptv-svc   service_vlan   PVID, egress untagged
+#   ct-iptv-mc    multicast_vlan PVID, egress untagged
+#
+# Idempotent; safe to run on every boot and after every network reload.
+
+. /lib/functions.sh
+
+config_load iptv
+config_get_bool ENABLED config enabled 0
+config_get LAN_PORT  config lan_port
+config_get SVC       config service_vlan
+config_get MC        config multicast_vlan
+
+[ "$ENABLED" -eq 1 ] || exit 0
+[ -n "$LAN_PORT" ] && [ -n "$SVC" ] || exit 0
+
+# A single-VLAN line does not need filtering: the transparent bridge already
+# hands the service VLAN to the port untagged.
+[ -n "$MC" ] || exit 0
+
+waited=0
+while [ ! -d /sys/class/net/br-iptv ]; do
+	waited=$((waited + 1))
+	[ "$waited" -gt 30 ] && exit 0
+	sleep 1
+done
+
+for d in "$LAN_PORT" ct-iptv-svc ct-iptv-mc; do
+	[ -d "/sys/class/net/$d" ] || exit 0
+done
+
+# Toggling the bridge down is required: the kernel refuses to change
+# vlan_filtering while the bridge has the default vlan 1 in use.
+ip link set br-iptv down 2>/dev/null
+ip link set br-iptv type bridge vlan_filtering 1 2>/dev/null
+ip link set br-iptv type bridge mcast_snooping 0 2>/dev/null
+
+for d in "$LAN_PORT" ct-iptv-svc ct-iptv-mc; do
+	bridge vlan del dev "$d" vid 1 2>/dev/null
+done
+
+bridge vlan add dev ct-iptv-svc vid "$SVC" pvid untagged 2>/dev/null
+bridge vlan add dev ct-iptv-mc  vid "$MC"  pvid untagged 2>/dev/null
+bridge vlan add dev "$LAN_PORT" vid "$SVC" pvid untagged 2>/dev/null
+bridge vlan add dev "$LAN_PORT" vid "$MC" 2>/dev/null
+
+ip link set br-iptv up 2>/dev/null
+
+logger -t iptv "br-iptv: vlan_filtering=1, $LAN_PORT $SVC untagged + $MC tagged"
+exit 0

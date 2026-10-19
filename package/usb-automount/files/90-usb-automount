@@ -1,0 +1,7 @@
+#!/bin/sh
+# Licensed to the public under the Apache License 2.0.
+#
+# First-boot setup for usb-automount: make sure the mount root exists.
+
+mkdir -p /mnt
+exit 0

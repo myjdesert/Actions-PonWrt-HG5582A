@@ -1,0 +1,24 @@
+#!/bin/sh /etc/rc.common
+# Licensed to the public under the Apache License 2.0.
+#
+# Writes the bridge definition from /etc/config/iptv.
+#
+# At boot this runs before network (START=19 < network's 20), so it only
+# rewrites the uci tree; netifd then creates br-iptv itself. The VLAN table is
+# applied later by /etc/init.d/iptv-vlan.
+
+START=19
+USE_PROCD=1
+
+start_service() {
+	# Boot ordering lets network and firewall consume the generated configuration.
+	/usr/libexec/iptv-apply boot
+}
+
+reload_service() {
+	/usr/libexec/iptv-apply reload
+}
+
+service_triggers() {
+	procd_add_reload_trigger "iptv"
+}

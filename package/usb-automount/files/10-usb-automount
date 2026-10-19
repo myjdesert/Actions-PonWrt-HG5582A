@@ -1,0 +1,74 @@
+#!/bin/sh
+# Licensed to the public under the Apache License 2.0.
+#
+# /etc/hotplug.d/block/10-usb-automount
+#
+# Mounts a freshly attached block device under /mnt/<devname> and removes the
+# mount point on unplug. Partitions handled by /etc/config/fstab are left alone
+# so block-mount keeps ownership of them.
+
+[ -n "$DEVNAME" ] || exit 0
+
+case "$ACTION" in
+	add|remove) ;;
+	*) exit 0 ;;
+esac
+
+# Whole-disk nodes (sda, mmcblk0) are skipped; partitions carry the filesystem.
+case "$DEVNAME" in
+	sd[a-z][0-9]*|mmcblk[0-9]*p[0-9]*|nvme[0-9]*n[0-9]*p[0-9]*) ;;
+	*) exit 0 ;;
+esac
+
+DEV="/dev/$DEVNAME"
+MNT="/mnt/$DEVNAME"
+
+is_in_fstab() {
+	[ -f /etc/config/fstab ] || return 1
+	uci -q show fstab 2>/dev/null | grep -q "$DEV" && return 0
+	grep -q "$DEV" /etc/config/fstab 2>/dev/null && return 0
+	return 1
+}
+
+is_mounted() {
+	grep -q " $DEV " /proc/mounts
+}
+
+if [ "$ACTION" = "remove" ]; then
+	[ -d "$MNT" ] || exit 0
+	is_mounted && umount -l "$MNT" 2>/dev/null
+	rmdir "$MNT" 2>/dev/null
+	logger -t usb-automount "removed $MNT"
+	exit 0
+fi
+
+is_in_fstab && exit 0
+is_mounted && exit 0
+[ -e "$DEV" ] || exit 0
+
+# Wait for udev/blkid to finish probing the new node.
+waited=0
+while [ $waited -lt 20 ]; do
+	TYPE="$(blkid -s TYPE -o value "$DEV" 2>/dev/null)"
+	[ -n "$TYPE" ] && break
+	sleep 0.1
+	waited=$((waited + 1))
+done
+[ -n "$TYPE" ] || { logger -t usb-automount "$DEV: no filesystem type"; exit 0; }
+
+case "$TYPE" in
+	ext2|ext3|ext4|vfat|exfat|ntfs|ntfs3|f2fs) ;;
+	*) logger -t usb-automount "$DEV: unsupported $TYPE"; exit 0 ;;
+esac
+
+mkdir -p "$MNT"
+
+if mount -t "$TYPE" -o rw,noatime,utf8 "$DEV" "$MNT" 2>/dev/null \
+	|| mount -t "$TYPE" -o rw,noatime "$DEV" "$MNT" 2>/dev/null; then
+	logger -t usb-automount "mounted $DEV ($TYPE) at $MNT"
+else
+	rmdir "$MNT" 2>/dev/null
+	logger -t usb-automount "failed to mount $DEV ($TYPE)"
+fi
+
+exit 0

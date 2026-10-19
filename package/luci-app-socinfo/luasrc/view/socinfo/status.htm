@@ -1,0 +1,155 @@
+<%+header%>
+
+<%
+local soc = require "luci.model.socinfo"
+local d   = soc.collect()
+
+local function temp_color(v)
+	if v >= 85 then return "#d93025" end
+	if v >= 80 then return "#e8710a" end
+	if v >= 70 then return "#f2b705" end
+	return "#2e8b57"
+end
+
+local function temp_bar(v)
+	local pct = math.min(math.max(v, 0), 100)
+	return string.format(
+		'<div style="background:#e8e8e8;height:8px;border-radius:4px;overflow:hidden;min-width:120px">' ..
+		'<div style="width:%.1f%%;height:100%%;background:%s"></div></div>',
+		pct, temp_color(v))
+end
+%>
+
+<div class="cbi-map">
+	<h2 name="content"><%:SoC Status%></h2>
+	<div class="cbi-map-descr">
+		<%:Temperature, clock, memory and storage, read straight from sysfs and /proc.%>
+		&nbsp;
+		<a class="btn cbi-button cbi-button-action" href="<%=luci.dispatcher.build_url('admin/status/socinfo')%>"><%:Refresh%></a>
+	</div>
+
+	<!-- overview -->
+	<div class="cbi-section">
+		<h3><%:Overview%></h3>
+		<table class="table" style="width:100%">
+			<tr>
+				<td style="width:25%;padding:10px;background:rgba(127,127,127,.08);border-radius:6px">
+					<div style="font-size:12px;opacity:.7"><%:CPU usage%></div>
+					<div style="font-size:22px;font-weight:600">
+						<% if d.usage then %><%=string.format("%.1f", d.usage)%>%<% else %>n/a<% end %>
+					</div>
+				</td>
+				<td style="width:8px"></td>
+				<td style="width:25%;padding:10px;background:rgba(127,127,127,.08);border-radius:6px">
+					<div style="font-size:12px;opacity:.7"><%:Load average%></div>
+					<div style="font-size:22px;font-weight:600"><%=string.format("%.2f", d.load[1])%></div>
+					<div style="font-size:11px;opacity:.6">
+						<%=string.format("%.2f", d.load[2])%> /
+						<%=string.format("%.2f", d.load[3])%>
+					</div>
+				</td>
+				<td style="width:8px"></td>
+				<td style="width:25%;padding:10px;background:rgba(127,127,127,.08);border-radius:6px">
+					<div style="font-size:12px;opacity:.7"><%:Memory%></div>
+					<div style="font-size:22px;font-weight:600"><%=string.format("%.0f", d.memory.pct)%>%</div>
+					<div style="font-size:11px;opacity:.6">
+						<%=soc.human_kb(d.memory.used_kb)%> / <%=soc.human_kb(d.memory.total_kb)%>
+					</div>
+				</td>
+				<td style="width:8px"></td>
+				<td style="width:25%;padding:10px;background:rgba(127,127,127,.08);border-radius:6px">
+					<div style="font-size:12px;opacity:.7"><%:Uptime%></div>
+					<div style="font-size:22px;font-weight:600"><%=soc.human_uptime(d.uptime)%></div>
+					<div style="font-size:11px;opacity:.6"><%:Governor%>: <%=d.governor%></div>
+				</td>
+			</tr>
+		</table>
+	</div>
+
+	<!-- temperature -->
+	<div class="cbi-section">
+		<h3><%:Temperature%></h3>
+		<% if #d.temps == 0 then %>
+			<div class="cbi-section-descr"><%:No thermal zone was found.%></div>
+		<% else %>
+			<table class="table" style="width:100%">
+				<tr style="text-align:left;font-size:12px;opacity:.6">
+					<th style="width:34%"><%:Sensor%></th>
+					<th style="width:16%"><%:Reading%></th>
+					<th><%:Level%></th>
+				</tr>
+				<% for _, t in ipairs(d.temps) do %>
+				<tr>
+					<td><code><%=t.name%></code></td>
+					<td style="color:<%=temp_color(t.value)%>;font-weight:600">
+						<%=string.format("%.1f", t.value)%> &deg;C
+					</td>
+					<td><%=temp_bar(t.value)%></td>
+				</tr>
+				<% end %>
+			</table>
+			<div class="cbi-section-descr" style="margin-top:8px">
+				<%:Green below 70 °C, amber 70–80 °C, orange 80–85 °C, red above 85 °C.%>
+			</div>
+		<% end %>
+	</div>
+
+	<!-- cpu -->
+	<div class="cbi-section">
+		<h3><%:CPU%></h3>
+		<% if #d.cpus == 0 then %>
+			<div class="cbi-section-descr"><%:cpufreq is not available.%></div>
+		<% else %>
+			<table class="table" style="width:100%">
+				<tr style="text-align:left;font-size:12px;opacity:.6">
+					<th style="width:20%"><%:Core%></th>
+					<th style="width:24%"><%:Current clock%></th>
+					<th style="width:24%"><%:Max clock%></th>
+					<th><%:Governor%></th>
+				</tr>
+				<% for _, c in ipairs(d.cpus) do %>
+				<tr>
+					<td>cpu<%=c.id%></td>
+					<td><%=string.format("%.0f", c.cur)%> MHz</td>
+					<td><%=string.format("%.0f", c.max)%> MHz</td>
+					<td><%=d.governor%></td>
+				</tr>
+				<% end %>
+			</table>
+			<div class="cbi-section-descr" style="margin-top:8px">
+				<%:Available governors%>: <%=table.concat(d.governors, ", ")%>
+			</div>
+		<% end %>
+	</div>
+
+	<!-- storage -->
+	<div class="cbi-section">
+		<h3><%:Storage%></h3>
+		<% if #d.storage == 0 then %>
+			<div class="cbi-section-descr"><%:No filesystem was found.%></div>
+		<% else %>
+			<table class="table" style="width:100%">
+				<tr style="text-align:left;font-size:12px;opacity:.6">
+					<th style="width:26%"><%:Device%></th>
+					<th style="width:24%"><%:Mount point%></th>
+					<th style="width:12%"><%:Type%></th>
+					<th style="width:16%"><%:Used%></th>
+					<th><%:Size%></th>
+				</tr>
+				<% for _, s in ipairs(d.storage) do
+					local u = d.df[s.mount]
+				%>
+				<tr>
+					<td><code><%=s.dev%></code></td>
+					<td><code><%=s.mount%></code></td>
+					<td><%=s.fstype%></td>
+					<td><% if u then %><%=soc.human_kb(u.used_kb)%><% else %>-<% end %></td>
+					<td><% if u then %><%=soc.human_kb(u.total_kb)%><% else %>-<% end %></td>
+				</tr>
+				<% end %>
+			</table>
+		<% end %>
+	</div>
+</div>
+
+<%+footer%>

@@ -95,6 +95,31 @@ jobs:
           cd openwrt && git log -1 --format='%H %ci %s'
           ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
 
+      - name: Install local packages
+        run: |
+          set -e
+          # Local packages live in this repository, so they are copied into the
+          # tree before defconfig walks package/. Two of them carry the fixes
+          # that were verified by hand on the device:
+          #   luci-app-iptv  - separate service/multicast VLAN + vlan_filtering
+          #   pon-guard      - refuse epon-1g, which hangs the PON probe
+          for d in package/*/; do
+            name="$(basename "$d")"
+            echo "==> $name"
+            rm -rf "openwrt/package/$name"
+            cp -r "$d" "openwrt/package/$name"
+          done
+          ls -d openwrt/package/luci-app-iptv openwrt/package/luci-app-socinfo \
+                openwrt/package/luci-app-rtp2httpd openwrt/package/pon-guard \
+                openwrt/package/rtp2httpd
+          find openwrt/package/luci-app-iptv openwrt/package/luci-app-socinfo \
+               openwrt/package/pon-guard -type f | sort
+          # luci.mk copies root/ into the rootfs verbatim, so the executable bit
+          # has to be set here rather than relying on it surviving the checkout.
+          chmod 0755 openwrt/package/luci-app-iptv/root/usr/libexec/* \
+                     openwrt/package/luci-app-iptv/root/etc/init.d/*
+          ls -l openwrt/package/luci-app-iptv/root/usr/libexec/
+
       - name: Cache downloaded sources
         uses: actions/cache@v4
         with:
@@ -180,6 +205,12 @@ jobs:
             '^CONFIG_PACKAGE_easytier=y$|easytier core'
             '^CONFIG_PACKAGE_luci-app-easytier=y$|easytier LuCI app'
             '^CONFIG_PACKAGE_luci-app-openclash=y$|OpenClash'
+            '^CONFIG_PACKAGE_luci-app-iptv=y$|IPTV bridge LuCI'
+            '^CONFIG_PACKAGE_luci-app-socinfo=y$|SoC status LuCI'
+            '^CONFIG_PACKAGE_luci-app-rtp2httpd=y$|rtp2httpd LuCI'
+            '^CONFIG_PACKAGE_rtp2httpd=y$|rtp2httpd core'
+            '^CONFIG_PACKAGE_pon-guard=y$|PON boot guard'
+            '^CONFIG_PACKAGE_usb-automount=y$|USB automount'
           )
           for entry in "${need[@]}"; do
             pat="${entry%%|*}"; label="${entry##*|}"
@@ -241,7 +272,9 @@ jobs:
           fi
           for p in luci-app-openclash luci-app-easytier easytier usbutils \
                    kmod-usb-storage kmod-usb-xhci-mtk kmod-fs-exfat block-mount \
-                   kmod-usb-net-rtl8152 airoha-ponctl kmod-airoha-en7572; do
+                   kmod-usb-net-rtl8152 airoha-ponctl kmod-airoha-en7572 \
+                   luci-app-iptv luci-app-socinfo luci-app-rtp2httpd rtp2httpd \
+                   pon-guard usb-automount; do
             if grep -qE "^${p}[ -]" "$MAN"; then
               echo "OK       $p"
             else
