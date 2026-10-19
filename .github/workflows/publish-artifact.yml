@@ -36,6 +36,11 @@ on:
         required: false
         default: ''
         type: string
+      pattern:
+        description: 'Only publish files matching this glob (empty = all)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
@@ -55,6 +60,8 @@ jobs:
           run-id: ${{ inputs.run_id }}
 
       - name: Collect, inspect and checksum
+        env:
+          PATTERN: ${{ inputs.pattern }}
         run: |
           set -e
           echo "=== downloaded tree ==="
@@ -65,8 +72,24 @@ jobs:
           mkdir -p out
           find dl -mindepth 1 -type f -exec cp -n {} out/ \;
           cd out
+
+          # Optional narrowing: a full target build also contains the non-UBI
+          # variants, which run to hundreds of MB and are of no use here.
+          if [ -n "$PATTERN" ]; then
+            echo "filtering to: $PATTERN (+ manifest / buildinfo)"
+            find . -maxdepth 1 -type f \
+                 ! -name "$PATTERN" ! -name '*.manifest' ! -name 'version.buildinfo' -delete
+          fi
+
           echo "=== publishing these files ==="
           ls -l
+          # The manifest is the ground truth for what actually landed in the
+          # rootfs, so show it rather than trusting the saved .config.
+          for m in *.manifest; do
+            [ -f "$m" ] || continue
+            echo "=== $m (installed packages) ==="
+            cat "$m"
+          done
           find . -maxdepth 1 -type f ! -name sha256sums -exec sha256sum {} \; | sed 's|\./||' > sha256sums
           cat sha256sums
           test -n "$(find . -maxdepth 1 -name '*.itb' -print -quit)" \
