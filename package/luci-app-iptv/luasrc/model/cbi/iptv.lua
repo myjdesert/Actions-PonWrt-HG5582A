@@ -1,7 +1,7 @@
 -- Licensed to the public under the Apache License 2.0.
 
 local sys  = require "luci.sys"
-local fs   = require "luci.fs"
+local fs   = require "nixio.fs"
 local uci  = require "luci.model.uci".cursor()
 
 local m, s, o

@@ -25,7 +25,13 @@ guard() {
 			uci commit pon
 			;;
 		'')
-			# No mode stored at all: leave it to pon.init's default.
+			# A fresh flash has no mode stored and pon.init then falls back to
+			# xgpon, which never registers on this EPON line. Default to the
+			# mode that is known to work here.
+			logger -t pon-guard \
+				"no PON mode stored; defaulting to epon-10g-1g"
+			uci set pon.line0.mode='epon-10g-1g'
+			uci commit pon
 			;;
 	esac
 }
