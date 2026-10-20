@@ -15,5 +15,5 @@ function index()
 
 	entry({"admin", "network", "iptv"},
 		cbi("iptv"),
-		_("IPTV Bridge"), 60).dependent = false
+		"IPTV 桥接", 60).dependent = false
 end

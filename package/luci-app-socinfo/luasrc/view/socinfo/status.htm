@@ -21,27 +21,27 @@ end
 %>
 
 <div class="cbi-map">
-	<h2 name="content"><%:SoC Status%></h2>
+	<h2 name="content">SoC 状态</h2>
 	<div class="cbi-map-descr">
-		<%:Temperature, clock, memory and storage, read straight from sysfs and /proc.%>
+		温度、频率、内存与存储，直接从 sysfs 和 /proc 读取。
 		&nbsp;
-		<a class="btn cbi-button cbi-button-action" href="<%=luci.dispatcher.build_url('admin/status/socinfo')%>"><%:Refresh%></a>
+		<a class="btn cbi-button cbi-button-action" href="<%=luci.dispatcher.build_url('admin/status/socinfo')%>">刷新</a>
 	</div>
 
-	<!-- overview -->
+	<!-- 概览 -->
 	<div class="cbi-section">
-		<h3><%:Overview%></h3>
+		<h3>概览</h3>
 		<table class="table" style="width:100%">
 			<tr>
 				<td style="width:25%;padding:10px;background:rgba(127,127,127,.08);border-radius:6px">
-					<div style="font-size:12px;opacity:.7"><%:CPU usage%></div>
+					<div style="font-size:12px;opacity:.7">CPU 占用</div>
 					<div style="font-size:22px;font-weight:600">
-						<% if d.usage then %><%=string.format("%.1f", d.usage)%>%<% else %>n/a<% end %>
+						<% if d.usage then %><%=string.format("%.1f", d.usage)%>%<% else %>无数据<% end %>
 					</div>
 				</td>
 				<td style="width:8px"></td>
 				<td style="width:25%;padding:10px;background:rgba(127,127,127,.08);border-radius:6px">
-					<div style="font-size:12px;opacity:.7"><%:Load average%></div>
+					<div style="font-size:12px;opacity:.7">平均负载</div>
 					<div style="font-size:22px;font-weight:600"><%=string.format("%.2f", d.load[1])%></div>
 					<div style="font-size:11px;opacity:.6">
 						<%=string.format("%.2f", d.load[2])%> /
@@ -50,7 +50,7 @@ end
 				</td>
 				<td style="width:8px"></td>
 				<td style="width:25%;padding:10px;background:rgba(127,127,127,.08);border-radius:6px">
-					<div style="font-size:12px;opacity:.7"><%:Memory%></div>
+					<div style="font-size:12px;opacity:.7">内存</div>
 					<div style="font-size:22px;font-weight:600"><%=string.format("%.0f", d.memory.pct)%>%</div>
 					<div style="font-size:11px;opacity:.6">
 						<%=soc.human_kb(d.memory.used_kb)%> / <%=soc.human_kb(d.memory.total_kb)%>
@@ -58,25 +58,25 @@ end
 				</td>
 				<td style="width:8px"></td>
 				<td style="width:25%;padding:10px;background:rgba(127,127,127,.08);border-radius:6px">
-					<div style="font-size:12px;opacity:.7"><%:Uptime%></div>
+					<div style="font-size:12px;opacity:.7">运行时长</div>
 					<div style="font-size:22px;font-weight:600"><%=soc.human_uptime(d.uptime)%></div>
-					<div style="font-size:11px;opacity:.6"><%:Governor%>: <%=d.governor%></div>
+					<div style="font-size:11px;opacity:.6">调频策略：<%=d.governor%></div>
 				</td>
 			</tr>
 		</table>
 	</div>
 
-	<!-- temperature -->
+	<!-- 温度 -->
 	<div class="cbi-section">
-		<h3><%:Temperature%></h3>
+		<h3>温度</h3>
 		<% if #d.temps == 0 then %>
-			<div class="cbi-section-descr"><%:No thermal zone was found.%></div>
+			<div class="cbi-section-descr">未找到温度传感器。</div>
 		<% else %>
 			<table class="table" style="width:100%">
 				<tr style="text-align:left;font-size:12px;opacity:.6">
-					<th style="width:34%"><%:Sensor%></th>
-					<th style="width:16%"><%:Reading%></th>
-					<th><%:Level%></th>
+					<th style="width:34%">传感器</th>
+					<th style="width:16%">读数</th>
+					<th>等级</th>
 				</tr>
 				<% for _, t in ipairs(d.temps) do %>
 				<tr>
@@ -89,23 +89,23 @@ end
 				<% end %>
 			</table>
 			<div class="cbi-section-descr" style="margin-top:8px">
-				<%:Green below 70 °C, amber 70–80 °C, orange 80–85 °C, red above 85 °C.%>
+				低于 70 ℃ 为绿色，70–80 ℃ 黄色，80–85 ℃ 橙色，高于 85 ℃ 红色。
 			</div>
 		<% end %>
 	</div>
 
-	<!-- cpu -->
+	<!-- CPU -->
 	<div class="cbi-section">
-		<h3><%:CPU%></h3>
+		<h3>CPU</h3>
 		<% if #d.cpus == 0 then %>
-			<div class="cbi-section-descr"><%:cpufreq is not available.%></div>
+			<div class="cbi-section-descr">cpufreq 不可用。</div>
 		<% else %>
 			<table class="table" style="width:100%">
 				<tr style="text-align:left;font-size:12px;opacity:.6">
-					<th style="width:20%"><%:Core%></th>
-					<th style="width:24%"><%:Current clock%></th>
-					<th style="width:24%"><%:Max clock%></th>
-					<th><%:Governor%></th>
+					<th style="width:20%">核心</th>
+					<th style="width:24%">当前频率</th>
+					<th style="width:24%">最高频率</th>
+					<th>调频策略</th>
 				</tr>
 				<% for _, c in ipairs(d.cpus) do %>
 				<tr>
@@ -117,24 +117,24 @@ end
 				<% end %>
 			</table>
 			<div class="cbi-section-descr" style="margin-top:8px">
-				<%:Available governors%>: <%=table.concat(d.governors, ", ")%>
+				可用调频策略：<%=table.concat(d.governors, "、")%>
 			</div>
 		<% end %>
 	</div>
 
-	<!-- storage -->
+	<!-- 存储 -->
 	<div class="cbi-section">
-		<h3><%:Storage%></h3>
+		<h3>存储</h3>
 		<% if #d.storage == 0 then %>
-			<div class="cbi-section-descr"><%:No filesystem was found.%></div>
+			<div class="cbi-section-descr">未找到文件系统。</div>
 		<% else %>
 			<table class="table" style="width:100%">
 				<tr style="text-align:left;font-size:12px;opacity:.6">
-					<th style="width:26%"><%:Device%></th>
-					<th style="width:24%"><%:Mount point%></th>
-					<th style="width:12%"><%:Type%></th>
-					<th style="width:16%"><%:Used%></th>
-					<th><%:Size%></th>
+					<th style="width:26%">设备</th>
+					<th style="width:24%">挂载点</th>
+					<th style="width:12%">类型</th>
+					<th style="width:16%">已用</th>
+					<th>容量</th>
 				</tr>
 				<% for _, s in ipairs(d.storage) do
 					local u = d.df[s.mount]
