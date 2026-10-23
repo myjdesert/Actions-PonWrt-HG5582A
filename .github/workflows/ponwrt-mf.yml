@@ -249,7 +249,13 @@ jobs:
       - name: Probe python3 build
         run: |
           cd openwrt
-          if ! make package/feeds/packages/lang/python/python3/compile V=s -j"$(nproc)" > /tmp/py3.log 2>&1; then
+          # feeds install creates package/feeds/<feed>/<pkg> symlinks; the feed's
+          # own lang/python/python3 path is not a valid make target.
+          if [ ! -e package/feeds/packages/python3 ]; then
+            echo "::warning::package/feeds/packages/python3 not present, skipping probe"
+            exit 0
+          fi
+          if ! make package/feeds/packages/python3/compile V=s -j"$(nproc)" > /tmp/py3.log 2>&1; then
             echo "::error::python3 failed to build, see the tail below"
             grep -nE "error:|Error [0-9]|FAILED|Killed|No such file" /tmp/py3.log | tail -40 || true
             echo "----- tail -----"
