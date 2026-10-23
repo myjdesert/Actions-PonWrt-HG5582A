@@ -241,6 +241,23 @@ jobs:
         with:
           limit-access-to-actor: true
 
+      # python3 is only a transitive dependency, yet when it breaks the whole
+      # world build dies with a single summary line: make -j swallows the actual
+      # compiler output. Build it alone and verbosely first, so a regression here
+      # costs ~25 minutes and a readable log instead of 90 minutes and a mystery.
+      # The stamps are reused by the real build, so this is not extra work.
+      - name: Probe python3 build
+        run: |
+          cd openwrt
+          if ! make package/feeds/packages/lang/python/python3/compile V=s -j"$(nproc)" > /tmp/py3.log 2>&1; then
+            echo "::error::python3 failed to build, see the tail below"
+            grep -nE "error:|Error [0-9]|FAILED|Killed|No such file" /tmp/py3.log | tail -40 || true
+            echo "----- tail -----"
+            tail -120 /tmp/py3.log
+            exit 1
+          fi
+          echo "python3 built fine"
+
       - name: Compile the firmware
         id: compile
         run: |

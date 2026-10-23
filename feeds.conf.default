@@ -1,4 +1,12 @@
-src-git packages https://github.com/immortalwrt/packages.git
+# Pinned on purpose. packages@72c7391 (2026-10-20) brought in a "Merge Official
+# Source" that stops python3 from cross-compiling, and python3 is pulled in
+# indirectly by the image -- not by anything in mf-extra.config. The world build
+# then dies at step 15 with only "ERROR: package/feeds/packages/python3 failed
+# to build" and no compiler output, because make -j swallows it.
+#
+# 70ac3a8 is the tip that the last green build used (2026-10-19 10:45Z). Drop the
+# ^suffix once upstream python3 builds again.
+src-git packages https://github.com/immortalwrt/packages.git^70ac3a84406cab03865c55be84de960af815436a
 src-git luci https://github.com/immortalwrt/luci.git
 src-git routing https://github.com/openwrt/routing.git
 src-git telephony https://github.com/openwrt/telephony.git
